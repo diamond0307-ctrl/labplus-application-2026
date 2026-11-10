@@ -105,7 +105,7 @@ form.addEventListener('submit',async e=>{
   state='preparing';submit.disabled=true;
   try{
     const data=new FormData(form);
-    snapshot=Object.fromEntries(fields.map(k=>[k,String(data.get(k)||'').trim()]));
+    snapshot=Object.fromEntries(fields.map(k=>[k,String(data.get(k)||'').replace(/\r\n?/g,'\n').trim()]));
     if(snapshot.kind!=='個別相談')snapshot.slot='';
     const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(fields.map(k=>snapshot[k]))));
     const fingerprint=Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('');

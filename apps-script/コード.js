@@ -62,7 +62,7 @@ function doGet(e) {
 }
 function normalize_(p) {
   const data = {};
-  FIELDS.forEach(k => data[k] = String(p[k] || '').trim());
+  FIELDS.forEach(k => data[k] = String(p[k] || '').replace(/\r\n?/g, '\n').trim());
   if (data.kind !== '個別相談') data.slot = '';
   return data;
 }
