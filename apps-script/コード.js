@@ -1,14 +1,15 @@
 const SHEET_ID = '1n57ImnsYXWICTWysdUlrIO84_H-XSVoy8XR3lKDRf40';
 const SHEET_NAME = '受付一覧';
-// 運営者が承認した日時だけを日本時間で追加する。空配列なら個別相談は受付停止。
-const CONSULTATION_SLOTS = [];
 const FIELDS = ['kind','slot','name','kana','email','phone','business','message','attendance','payment','confirmed'];
 const HEADERS = ['受付日時','受付内容','お名前','ふりがな','メールアドレス','電話番号','事業内容','相談内容・質問','相談希望日時','初回参加','支払方法','審査状況','書類送付状況','確認事項への同意','リクエストID','申込内容ハッシュ'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const HASH = /^[0-9a-f]{64}$/;
 
-function activeSlots_() {
-  return CONSULTATION_SLOTS.filter(s => /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s) && Date.parse(s.replace(' ', 'T') + ':00+09:00') > Date.now());
+// 希望日時は申込者が入力する。日本時間の実在する未来の日時のみ受け付ける。
+function validConsultationDate_(value) {
+  if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(value)) return false;
+  const time = Date.parse(value.replace(' ', 'T') + ':00+09:00');
+  return Number.isFinite(time) && time > Date.now() && new Date(time + 9*60*60*1000).toISOString().slice(0,16).replace('T',' ') === value;
 }
 function jsonp_(callback, data) {
   return ContentService.createTextOutput(callback + '(' + JSON.stringify(data).replace(/</g,'\\u003c') + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
@@ -46,7 +47,7 @@ function receipt_(sheet,id,hash) {
 function cacheKey_(id) { return 'labplus:' + SHEET_NAME + ':' + id; }
 function doGet(e) {
   const p = e && e.parameter || {};
-  if (p.action === 'config') return jsonp_('labplusConfigure',{slots:activeSlots_()});
+  if (p.action === 'config') return jsonp_('labplusConfigure',{slots:[],mode:'manual'});
   const id = UUID.test(p.id || '') ? p.id : '';
   if (!id) return jsonp_('labplusReceive',{id:'',ok:false,state:'rejected',code:'INVALID_ID'});
   try {
@@ -63,7 +64,7 @@ function doGet(e) {
 function normalize_(p) {
   const data = {};
   FIELDS.forEach(k => data[k] = String(p[k] || '').replace(/\r\n?/g, '\n').trim());
-  if (data.kind !== '個別相談') data.slot = '';
+  data.slot = data.kind === '個別相談' ? data.slot.replace('T',' ') : '';
   return data;
 }
 function fingerprint_(data) {
@@ -74,7 +75,7 @@ function validationCode_(d) {
   if (['kind','name','kana','email','phone','business','attendance','confirmed'].some(k => !d[k]) || FIELDS.some(k => d[k].length > 2000)) return 'INVALID_FIELDS';
   if (!['講座申し込み','個別相談'].includes(d.kind) || !['参加できる','参加できない','まだ分からない'].includes(d.attendance) || !['','銀行振込','クレジットカード'].includes(d.payment) || d.confirmed !== 'on') return 'INVALID_FIELDS';
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.email)) return 'INVALID_FIELDS';
-  if (d.kind === '個別相談' && !activeSlots_().includes(d.slot)) return 'SLOT_UNAVAILABLE';
+  if (d.kind === '個別相談' && !validConsultationDate_(d.slot)) return 'SLOT_UNAVAILABLE';
   return '';
 }
 function doPost(e) {

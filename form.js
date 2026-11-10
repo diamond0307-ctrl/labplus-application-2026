@@ -8,7 +8,7 @@ const retry=document.querySelector('#retry');
 const reference=document.querySelector('#receipt-reference');
 const endpoint='https://script.google.com/macros/s/AKfycbwBc9W3sUDxezuVm9Vhyh1JsSDx6wg1kyJhbAs0zrnYA-ryUJ6Yj7kvp2fKBy5wSSzI/exec';
 const fields=['kind','slot','name','kana','email','phone','business','message','attendance','payment','confirmed'];
-let state='idle', request=null, snapshot=null, timer, poll, checking=false, configured=false, slots=[];
+let state='idle', request=null, snapshot=null, timer, poll, checking=false;
 const frame=document.createElement('iframe');
 frame.name='labplus-receiver';frame.hidden=true;document.body.append(frame);
 const uuid=()=>crypto.randomUUID ? crypto.randomUUID() : '10000000-1000-4000-8000-100000000000'.replace(/[018]/g,c=>(Number(c) ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> Number(c)/4).toString(16));
@@ -24,19 +24,13 @@ function loadScript(query) {
 function updateConsult() {
   const isConsult=form.elements.kind.value==='個別相談';
   consult.classList.toggle('hidden',!isConsult);
-  slot.required=isConsult;slot.disabled=state!=='idle' || !slots.length;
+  slot.required=isConsult;slot.disabled=state!=='idle' || !isConsult;
+  slot.min=new Date(Math.ceil(Date.now()/60000)*60000+9*60*60*1000).toISOString().slice(0,16);
   if(!isConsult)slot.value='';
-  if(state==='idle')submit.disabled=isConsult && (!configured || !slots.length);
+  slot.setCustomValidity('');
+  if(state==='idle')submit.disabled=false;
 }
-window.labplusConfigure=data=>{
-  if(!data || !Array.isArray(data.slots))return;
-  slots=data.slots.filter(value=>typeof value==='string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(value) && Date.parse(value.replace(' ','T')+':00+09:00')>Date.now());
-  slot.replaceChildren(new Option('希望日時を選択してください',''));
-  for(const value of slots)slot.add(new Option(value.replace(/^(\d{4})-(\d{2})-(\d{2}) /,'$1年$2月$3日 '),value));
-  configured=true;
-  document.querySelector('#consult-help').textContent=slots.length ? '開始時刻をお選びください。日時は日本時間です。受付後、詳細をご案内します。' : '現在、個別相談の受付日時は未定です。日時が決まり次第、こちらに表示します。';
-  updateConsult();
-};
+slot.addEventListener('input',()=>slot.setCustomValidity(''));
 form.addEventListener('change',updateConsult);
 function lockFields(locked) {
   for(const el of form.querySelectorAll('input,select,textarea'))el.disabled=locked;
@@ -73,7 +67,7 @@ window.labplusReceive=data=>{
     status.scrollIntoView({behavior:'smooth',block:'center'});
   }else if(data.state==='rejected' && (data.attempt===request.attempt || data.code==='ID_CONFLICT')){
     stopChecking();state='idle';remember();lockFields(false);retry.hidden=true;
-    status.textContent=data.code==='SLOT_UNAVAILABLE' ? '選択された個別相談日時は現在受付していません。受付可能な日時をご確認ください。' : data.code==='ID_CONFLICT' ? '受付番号と申込内容が一致しません。受付番号を添えて公式LINEへお問い合わせください。' : '入力内容を確認できなかったため保存されませんでした。必須項目・メールアドレス・確認事項への同意をご確認ください。';
+    status.textContent=data.code==='SLOT_UNAVAILABLE' ? '個別相談の希望日時を確認できませんでした。現在より後の日時を日本時間で入力してください。' : data.code==='ID_CONFLICT' ? '受付番号と申込内容が一致しません。受付番号を添えて公式LINEへお問い合わせください。' : '入力内容を確認できなかったため保存されませんでした。必須項目・メールアドレス・確認事項への同意をご確認ください。';
     submit.textContent='入力内容を送信する';updateConsult();
     if(data.code==='ID_CONFLICT')submit.disabled=true;
   }
@@ -100,13 +94,13 @@ form.addEventListener('submit',async e=>{
     status.textContent='受付状況を再確認しています。追加の申込データは送信していません。';startChecking();return;
   }
   for(const el of form.querySelectorAll('input[required]:not([type=radio]):not([type=checkbox]),textarea[required]'))el.value=el.value.trim();
+  if(form.elements.kind.value==='個別相談' && (!slot.value || !(Date.parse(slot.value+':00+09:00')>Date.now())))slot.setCustomValidity('現在より後の希望日時を日本時間で入力してください。');
   if(!form.reportValidity())return;
-  if(form.elements.kind.value==='個別相談' && (!configured || !slots.includes(slot.value)))return;
   state='preparing';submit.disabled=true;
   try{
     const data=new FormData(form);
     snapshot=Object.fromEntries(fields.map(k=>[k,String(data.get(k)||'').replace(/\r\n?/g,'\n').trim()]));
-    if(snapshot.kind!=='個別相談')snapshot.slot='';
+    snapshot.slot=snapshot.kind==='個別相談' ? snapshot.slot.replace('T',' ') : '';
     const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(fields.map(k=>snapshot[k]))));
     const fingerprint=Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('');
     let previous;
@@ -119,6 +113,4 @@ form.addEventListener('submit',async e=>{
   }catch(_){state='idle';updateConsult();status.textContent='送信の準備ができませんでした。入力内容は送信されていません。ブラウザを更新してからお試しください。'}
 });
 retry.addEventListener('click',()=>{if(state==='unknown' && !checking && request && snapshot)sendSnapshot()});
-loadScript({action:'config'});
 updateConsult();
-setTimeout(()=>{if(!configured)document.querySelector('#consult-help').textContent='現在、個別相談の受付日時を確認できません。時間をおいて再度お試しください。'},15000);
