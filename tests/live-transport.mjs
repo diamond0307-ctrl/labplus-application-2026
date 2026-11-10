@@ -1,0 +1,24 @@
+import assert from 'node:assert/strict';
+import {createHash,randomUUID} from 'node:crypto';
+import {writeFile} from 'node:fs/promises';
+// Explicit QA endpoint only. Never defaults to production.
+const endpoint=process.argv[2];
+if(!endpoint || !/^https:\/\/script.google.com\/macros\/s\/[^/]+\/exec$/.test(endpoint))throw Error('Pass the test deployment URL');
+const fields=['kind','slot','name','kana','email','phone','business','message','attendance','payment','confirmed'];
+const p={kind:'講座申し込み',slot:'',name:'同時送信テスト_申込ではありません',kana:'どうじそうしんてすと',email:'labplus-race-test@example.com',phone:'00000000000',business:'QA concurrency '+randomUUID(),message:'請求・ご案内不要',attendance:'参加できない',payment:'',confirmed:'on',request_id:randomUUID(),attempt:randomUUID()};
+const fingerprint=data=>createHash('sha256').update(JSON.stringify(fields.map(k=>data[k]))).digest('hex');
+const post=async data=>{const r=await fetch(endpoint,{method:'POST',body:new URLSearchParams(data),redirect:'follow'});assert.equal(r.status,200);return r.json()};
+const get=async data=>{const r=await fetch(endpoint+'?'+new URLSearchParams(data));assert.equal(r.status,200);const text=await r.text();assert.ok(text.startsWith('labplusReceive('));return JSON.parse(text.slice(15,-2))};
+const simultaneous=await Promise.all([post(p),post(p),post(p)]);
+assert.ok(simultaneous.every(r=>r.ok && r.receipt_id===p.request_id));
+const receipt=await get({id:p.request_id,fingerprint:fingerprint(p),attempt:p.attempt});assert.equal(receipt.state,'saved');
+const another={...p,request_id:randomUUID()};const duplicate=await post(another);assert.equal(duplicate.receipt_id,p.request_id);
+assert.equal((await get({id:another.request_id,fingerprint:fingerprint(p),attempt:p.attempt})).state,'saved');
+const invalid={...p,request_id:randomUUID(),email:'invalid'};
+assert.equal((await post(invalid)).state,'rejected');
+assert.equal((await get({id:invalid.request_id,fingerprint:fingerprint(invalid),attempt:invalid.attempt})).code,'INVALID_FIELDS');
+const missing={...p,request_id:randomUUID(),confirmed:''};assert.equal((await post(missing)).state,'rejected');
+const conflict=await post({...p,message:'changed'});assert.equal(conflict.code,'ID_CONFLICT');
+const unknown=await get({id:randomUUID()});assert.equal(unknown.state,'pending');assert.equal(unknown.ok,false);
+const result={passed:true,simultaneousPosts:3,receiptId:p.request_id,duplicateId:another.request_id,invalidId:invalid.request_id,checks:['parallel same ID','same contents new ID','saved receipt','validation error receipt','consent required','ID conflict','unknown never success']};
+await writeFile('evidence/live-transport.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));

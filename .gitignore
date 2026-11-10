@@ -1,0 +1,5 @@
+evidence/
+.staging/
+.preview*/
+node_modules/
+apps-script/.clasp.json
